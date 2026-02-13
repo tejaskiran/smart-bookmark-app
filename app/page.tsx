@@ -4,10 +4,11 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 
 type Bookmark = {
-  id: number;
+  id: string;
   title: string;
   url: string;
   user_id: string;
+  created_at: string;
 };
 
 export default function Home() {
@@ -22,7 +23,7 @@ export default function Home() {
       .from('bookmarks')
       .select('*')
       .eq('user_id', userId)
-      .order('id', { ascending: false });
+      .order('created_at', { ascending: false });
 
     if (!error && data) {
       setBookmarks(data);
@@ -31,8 +32,12 @@ export default function Home() {
 
   useEffect(() => {
     const checkUser = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
       setUser(session?.user ?? null);
+
       if (session?.user) {
         fetchBookmarks(session.user.id);
       }
@@ -40,14 +45,17 @@ export default function Home() {
 
     checkUser();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchBookmarks(session.user.id);
-      } else {
-        setBookmarks([]);
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setUser(session?.user ?? null);
+
+        if (session?.user) {
+          fetchBookmarks(session.user.id);
+        } else {
+          setBookmarks([]);
+        }
       }
-    });
+    );
 
     return () => {
       authListener.subscription.unsubscribe();
@@ -61,7 +69,12 @@ export default function Home() {
       .channel('bookmarks-realtime')
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'bookmarks', filter: `user_id=eq.${user.id}` },
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'bookmarks',
+          filter: `user_id=eq.${user.id}`,
+        },
         (payload) => {
           setBookmarks((prev) => {
             if (prev.find((b) => b.id === payload.new.id)) return prev;
@@ -71,7 +84,12 @@ export default function Home() {
       )
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'bookmarks', filter: `user_id=eq.${user.id}` },
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'bookmarks',
+          filter: `user_id=eq.${user.id}`,
+        },
         (payload) => {
           setBookmarks((prev) =>
             prev.map((b) =>
@@ -82,11 +100,14 @@ export default function Home() {
       )
       .on(
         'postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'bookmarks', filter: `user_id=eq.${user.id}` },
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'bookmarks',
+          filter: `user_id=eq.${user.id}`,
+        },
         (payload) => {
-          setBookmarks((prev) =>
-            prev.filter((b) => b.id !== payload.old.id)
-          );
+          setBookmarks((prev) => prev.filter((b) => b.id !== payload.old.id));
         }
       )
       .subscribe((status) => {
@@ -101,7 +122,7 @@ export default function Home() {
   const signInWithGoogle = async () => {
     await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.origin },
+      options: { redirectTo: `${window.location.origin}/` },
     });
   };
 
@@ -117,13 +138,17 @@ export default function Home() {
 
     setLoading(true);
 
-    const tempId = Date.now();
+    // optimistic UI temp id
+    const tempId = `temp-${Date.now()}`;
+
     const newBookmark: Bookmark = {
       id: tempId,
       title,
       url,
       user_id: user.id,
+      created_at: new Date().toISOString(),
     };
+
     setBookmarks((prev) => [newBookmark, ...prev]);
 
     const { error, data } = await supabase
@@ -148,13 +173,11 @@ export default function Home() {
     setLoading(false);
   };
 
-  const deleteBookmark = async (id: number) => {
+  const deleteBookmark = async (id: string) => {
+    // optimistic remove
     setBookmarks((prev) => prev.filter((b) => b.id !== id));
 
-    const { error } = await supabase
-      .from('bookmarks')
-      .delete()
-      .eq('id', id);
+    const { error } = await supabase.from('bookmarks').delete().eq('id', id);
 
     if (error) {
       console.error('Delete error:', error);
